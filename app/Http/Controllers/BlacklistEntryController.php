@@ -2,6 +2,7 @@
 namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\BlacklistEntry;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -42,6 +43,44 @@ class BlacklistEntryController extends Controller
         $data = $request->validate(['status'=>['required','in:active,expired,appealed']]);
         $blacklistEntry->update(['status'=>$data['status']]); $this->audit($request, $blacklistEntry, 'status_changed', $data);
         return back()->with('success','Status updated.');
+    }
+    public function lookup(Request $request): JsonResponse{
+        $data = $request->validate([
+            'id_document_number'=>['nullable','string','max:120'],
+            'raw_payload'=>['nullable','string','max:8000'],
+            'first_name'=>['nullable','string','max:120'],
+            'last_name'=>['nullable','string','max:120'],
+            'birth_date'=>['nullable','date'],
+        ]);
+        $document = trim((string)($data['id_document_number'] ?? ''));
+        $raw = trim((string)($data['raw_payload'] ?? ''));
+        $first = trim((string)($data['first_name'] ?? ''));
+        $last = trim((string)($data['last_name'] ?? ''));
+        $birth = trim((string)($data['birth_date'] ?? ''));
+        $hash = $raw !== '' ? hash('sha256', $raw) : null;
+        $matches = BlacklistEntry::query()
+            ->where(function($q) use ($document, $hash, $first, $last, $birth) {
+                if ($document !== '') $q->orWhere('id_document_number', $document);
+                if ($hash) $q->orWhere('scanned_payload_hash', $hash);
+                if ($first !== '' && $last !== '') {
+                    $q->orWhere(function($name) use ($first, $last, $birth) {
+                        $name->where('first_name', 'like', $first)->where('last_name', 'like', $last);
+                        if ($birth !== '') $name->whereDate('birth_date', $birth);
+                    });
+                }
+            })
+            ->latest()
+            ->limit(10)
+            ->get(['id','first_name','last_name','birth_date','id_document_number','nationality','reason','location','status','last_checked_at','created_at']);
+        $matches->each(function(BlacklistEntry $entry) use ($request) {
+            $entry->forceFill(['last_checked_at'=>now()])->save();
+            $this->audit($request, $entry, 'nfc_lookup');
+        });
+        return response()->json([
+            'found' => $matches->isNotEmpty(),
+            'active_found' => $matches->contains(fn($entry) => $entry->status === 'active'),
+            'matches' => $matches,
+        ]);
     }
     public function check(Request $request){
         $data = $request->validate(['query'=>['required','string','max:255']]);
