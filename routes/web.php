@@ -11,6 +11,7 @@ Route::middleware('guest')->group(function () {
 Route::post('/logout', [AuthController::class, 'destroy'])->middleware('auth')->name('logout');
 Route::middleware('auth')->group(function () {
     Route::get('/', DashboardController::class)->name('dashboard');
+    Route::get('blacklist/lookup', [BlacklistEntryController::class, 'lookup'])->name('blacklist.lookup');
     Route::resource('blacklist', BlacklistEntryController::class)->except(['show']);
     Route::post('blacklist/check', [BlacklistEntryController::class, 'check'])->name('blacklist.check');
     Route::post('blacklist/{blacklistEntry}/status', [BlacklistEntryController::class, 'status'])->name('blacklist.status');
